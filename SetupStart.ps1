@@ -48,8 +48,8 @@ if ($nchBranch -eq "preview") {
 }
 elseif ($nchBranch -eq "") {
     AddToStatus "Installing Latest Business Central Container Helper from PowerShell Gallery"
-    Install-Module -Name bccontainerhelper -Force
-    Import-Module -Name bccontainerhelper -DisableNameChecking
+    Install-Module -Name bccontainerhelper -RequiredVersion 3.0.1 -Force
+    Import-Module -Name bccontainerhelper -RequiredVersion 3.0.1 -DisableNameChecking
     AddToStatus ("Using BcContainerHelper version "+(get-module BcContainerHelper).Version.ToString())
 } else {
     if ($nchBranch -notlike "https://*") {
@@ -176,7 +176,7 @@ if ("$createStorageQueue" -eq "yes") {
     if (-not (Get-InstalledModule AzTable -ErrorAction SilentlyContinue)) {
         AddToStatus "Installing AzTable Module"
         Install-Module AzTable -Force
-    
+
         $taskName = "RunQueue"
         $startupAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy UnRestricted -File c:\demo\RunQueue.ps1"
         $startupTrigger = New-ScheduledTaskTrigger -AtStartup
@@ -189,10 +189,10 @@ if ("$createStorageQueue" -eq "yes") {
                                -RunLevel Highest `
                                -User $vmAdminUsername `
                                -Password $plainPassword
-        
+
         $task.Triggers.Repetition.Interval = "PT5M"
         $task | Set-ScheduledTask -User $vmAdminUsername -Password $plainPassword | Out-Null
-    
+
         Start-ScheduledTask -TaskName $taskName
     }
 }
@@ -226,15 +226,15 @@ if ($WindowsInstallationType -eq "Server") {
                            -RunLevel Highest `
                            -User $vmAdminUsername `
                            -Password $plainPassword | Out-Null
-    
+
     Start-ScheduledTask -TaskName SetupVm
 }
 else {
-    
+
     if (Get-ScheduledTask -TaskName SetupStart -ErrorAction Ignore) {
         schtasks /DELETE /TN SetupStart /F | Out-Null
     }
-    
+
     $startupAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy UnRestricted -File c:\demo\SetupVm.ps1"
     $startupTrigger = New-ScheduledTaskTrigger -AtStartup
     $startupTrigger.Delay = "PT1M"
@@ -246,9 +246,9 @@ else {
                            -RunLevel "Highest" `
                            -User $vmAdminUsername `
                            -Password $plainPassword | Out-Null
-    
+
     AddToStatus -color Yellow "Restarting computer. After restart, please Login to computer using RDP in order to resume the installation process. This is not needed for Windows Server."
-    
+
     Shutdown -r -t 60
 
 }
