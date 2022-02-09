@@ -37,8 +37,8 @@ if (!(Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction Ignore)) {
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.208 -Force -WarningAction Ignore | Out-Null
 }
 
-Install-Module -Name bccontainerhelper -Force
-Import-Module -Name bccontainerhelper -DisableNameChecking
+Install-Module -Name bccontainerhelper -RequiredVersion 3.0.1 -Force
+Import-Module -Name bccontainerhelper -RequiredVersion 3.0.1 -DisableNameChecking
 
 $installDocker = (!(Test-Path -Path "C:\Program Files\Docker\docker.exe" -PathType Leaf))
 if ($installDocker) {
@@ -66,7 +66,7 @@ if ($installDocker) {
 
 if ($finalSetupScriptUrl) {
     if ($finalSetupScriptUrl -notlike "https://*" -and $finalSetupScriptUrl -notlike "http://*") {
-        $finalSetupScriptUrl = $templateLink.Substring(0,$templateLink.LastIndexOf('/')+1)+$finalSetupScriptUrl    
+        $finalSetupScriptUrl = $templateLink.Substring(0,$templateLink.LastIndexOf('/')+1)+$finalSetupScriptUrl
     }
     Set-Content -Path (Join-Path $DownloadFolder "url.txt") -Value "$finalSetupScriptUrl"
     $finalSetupScript = Join-Path $DownloadFolder "FinalSetupScript.ps1"
