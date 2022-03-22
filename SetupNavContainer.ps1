@@ -94,7 +94,7 @@ else {
     else {
         AddToStatus "Creating Aad Apps for Office 365 integration"
         if (([System.Version]$navVersion).Major -ge 15) {
-            $publicWebBaseUrl = "https://$publicDnsName/BC/"
+            $publicWebBaseUrl = "https://$publicDnsName"
         }
         else {
             $publicWebBaseUrl = "https://$publicDnsName/NAV/"
