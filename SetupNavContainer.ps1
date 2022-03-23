@@ -104,6 +104,8 @@ else {
         }
         $secureOffice365Password = ConvertTo-SecureString -String $Office365Password -Key $passwordKey
         $Office365Credential = New-Object System.Management.Automation.PSCredential($Office365UserName, $secureOffice365Password)
+        $appIdUri = "https://$($publicDnsName.Split('.')[0]).$($publicDnsName.Split('.')[1]).$($Office365UserName.split('@')[1])"
+        
         try {
             $AdProperties = Create-AadAppsForNav -AadAdminCredential $Office365Credential -appIdUri $publicWebBaseUrl -IncludeExcelAadApp -IncludePowerBiAadApp -IncludeEMailAadApp
 
