@@ -1,7 +1,8 @@
+
 ﻿if (!(Test-Path function:AddToStatus)) {
     function AddToStatus([string]$line, [string]$color = "Gray") {
         ("<font color=""$color"">" + [DateTime]::Now.ToString([System.Globalization.DateTimeFormatInfo]::CurrentInfo.ShortTimePattern.replace(":mm",":mm:ss")) + " $line</font>") | Add-Content -Path "c:\demo\status.txt" -Force -ErrorAction SilentlyContinue
-        Write-Host -ForegroundColor $color $line
+        Write-Host -ForegroundColor $color $line 
     }
 }
 
@@ -20,7 +21,18 @@ if ($artifactUrl) {
 
     if ($artifactUrl -notlike "https://*") {
         $segments = "$artifactUrl/////".Split('/')
-        $artifactUrl = Get-BCArtifactUrl -storageAccount $segments[0] -type $segments[1] -version $segments[2] -country $segments[3] -select $segments[4] -sasToken $segments[5] | Select-Object -First 1
+        $params = @{
+            "storageAccount" = $segments[0]
+            "type" = $segments[1]
+            "version" = $segments[2]
+            "country" = $segments[3]
+            "select" = $segments[4]
+            "sasToken" = $segments[5]
+        }
+        if ($AcceptInsiderEula -eq "Yes") {
+            $params += @{ "accept_insiderEula" = $true }
+        }
+        $artifactUrl = Get-BCArtifactUrl @Params | Select-Object -First 1
     }
 
     $artifactPaths = Download-Artifacts -artifactUrl $artifactUrl -includePlatform
@@ -34,7 +46,7 @@ if ($artifactUrl) {
     if ($appManifest.PSObject.Properties.name -eq "Nav") {
         $nav = $appManifest.Nav
     }
-
+    
     $cu = ""
     if ($appManifest.PSObject.Properties.name -eq "Cu") {
         $cu =$appManifest.Cu
@@ -42,11 +54,10 @@ if ($artifactUrl) {
 
     $navVersion = $appmanifest.Version
     $country = $appManifest.Country.ToLowerInvariant()
-    $locale = Get-LocaleFromCountry $country
+    $locale = Get-LocaleFromCountry $country    
 
-    $Params = @{
+    $Params = @{ 
         "artifactUrl" = $artifactUrl
-        "imageName" = "mybc:$navVersion-$country".ToLowerInvariant()
     }
 }
 elseif ($navDockerImage) {
@@ -55,7 +66,7 @@ elseif ($navDockerImage) {
         AddToStatus "Removing container $containerName"
         docker rm $_ -f | Out-Null
     }
-
+    
     $exist = $false
     docker images -q --no-trunc | ForEach-Object {
         $inspect = docker inspect $_ | ConvertFrom-Json
@@ -65,7 +76,7 @@ elseif ($navDockerImage) {
         AddToStatus "Pulling $imageName (this might take ~30 minutes)"
         docker pull $imageName
     }
-
+    
     $inspect = docker inspect $imageName | ConvertFrom-Json
     $country = $inspect.Config.Labels.country
     $navVersion = $inspect.Config.Labels.version
@@ -80,6 +91,10 @@ else {
     exit
 }
 
+if ($AcceptInsiderEula -eq "Yes") {
+    $params += @{ "accept_insiderEula" = $true }
+}
+
 if ($Office365Password -eq "" -or (!$Office365UserName.contains('@'))) {
     $auth = "NavUserPassword"
     if (Test-Path "c:\myfolder\SetupConfiguration.ps1") {
@@ -88,21 +103,34 @@ if ($Office365Password -eq "" -or (!$Office365UserName.contains('@'))) {
 }
 else {
     $auth = "AAD"
+
+    $secureOffice365Password = ConvertTo-SecureString -String $Office365Password -Key $passwordKey
+    $Office365Credential = New-Object System.Management.Automation.PSCredential($Office365UserName, $secureOffice365Password)
+    $aadDomain = $Office365UserName.split('@')[1]
+    $appIdUri = "https://$($publicDnsName.Split('.')[0]).$($publicDnsName.Split('.')[1]).$aadDomain/BC"
+
     if (Test-Path "c:\myfolder\SetupConfiguration.ps1") {
         AddToStatus "Reusing existing Aad Apps for Office 365 integration"
+
+        $params += @{
+            "AadTenant" = $aadTenantId
+            "AadAppId" =  $SsoAdAppId
+            "AadAppIdUri" = $appIdUri
+        }
     }
     else {
         AddToStatus "Creating Aad Apps for Office 365 integration"
         if (([System.Version]$navVersion).Major -ge 15) {
-            $publicWebBaseUrl = "https://$publicDnsName/BC/"
+            if ($AddTraefik -eq "Yes") {
+                $publicWebBaseUrl = "https://$publicDnsName/$("$containerName".ToUpperInvariant())/"
+            }
+            else {
+                $publicWebBaseUrl = "https://$publicDnsName/BC/"
+            }
         }
         else {
             $publicWebBaseUrl = "https://$publicDnsName/NAV/"
         }
-        $secureOffice365Password = ConvertTo-SecureString -String $Office365Password -Key $passwordKey
-        $Office365Credential = New-Object System.Management.Automation.PSCredential($Office365UserName, $secureOffice365Password)
-        $aadTenant = $Office365UserName.split('@')[1]
-        $appIdUri = "https://$($publicDnsName.Split('.')[0]).$($publicDnsName.Split('.')[1]).$aadTenant"
 
 @"
 `$appIdUri = '$appIdUri'
@@ -110,57 +138,71 @@ else {
 "@ | Set-Content "c:\myfolder\SetupConfiguration.ps1"
 
         try {
-            $AdProperties = Create-AadAppsForNav `
-                -AadAdminCredential $Office365Credential `
+            $authContext = New-BcAuthContext -tenantID $aadDomain -credential $Office365Credential -scopes "https://graph.microsoft.com/.default"
+            if (-not $authContext) {
+                $authContext = New-BcAuthContext -includeDeviceLogin -scopes "https://graph.microsoft.com/.default" -deviceLoginTimeout ([TimeSpan]::FromSeconds(0))
+                AddToStatus $authContext.message
+                $authContext = New-BcAuthContext -deviceCode $authContext.deviceCode -deviceLoginTimeout ([TimeSpan]::FromMinutes(30))
+                if (-not $authContext) {
+                    throw "Failed to authenticate with Office 365"
+                }
+            }
+            $AdProperties = New-AadAppsForBC `
+                -bcAuthContext $authContext `
                 -appIdUri $appIdUri `
                 -publicWebBaseUrl $publicWebBaseUrl `
                 -IncludeExcelAadApp `
-                -IncludePowerBiAadApp `
-                -IncludeEMailAadApp `
                 -IncludeApiAccess `
+                -IncludeOtherServicesAadApp `
                 -preAuthorizePowerShell
 
+            $aadTenantId = $authContext.tenantID
             $SsoAdAppId = $AdProperties.SsoAdAppId
             $SsoAdAppKeyValue = $AdProperties.SsoAdAppKeyValue
             $ExcelAdAppId = $AdProperties.ExcelAdAppId
             $ExcelAdAppKeyValue = $AdProperties.ExcelAdAppKeyValue
-            $PowerBiAdAppId = $AdProperties.PowerBiAdAppId
-            $PowerBiAdAppKeyValue = $AdProperties.PowerBiAdAppKeyValue
+            $OtherServicesAdAppId = $AdProperties.OtherServicesAdAppId
+            $OtherServicesAdAppKeyValue = $AdProperties.OtherServicesAdAppKeyValue
             $ApiAdAppId = $AdProperties.ApiAdAppId
             $ApiAdAppKeyValue = $AdProperties.ApiAdAppKeyValue
-            $EMailAdAppId = $AdProperties.EMailAdAppId
-            $EMailAdAppKeyValue = $AdProperties.EMailAdAppKeyValue
 
 @"
-Write-Host 'Changing Server config to NavUserPassword to enable basic web services'
 Set-NAVServerConfiguration -ServerInstance `$serverInstance -KeyName 'ExcelAddInAzureActiveDirectoryClientId' -KeyValue '$ExcelAdAppId' -WarningAction Ignore
 "@ | Add-Content "c:\myfolder\SetupConfiguration.ps1"
 
-            $settings = Get-Content -path $settingsScript | Where-Object { $_ -notlike '$SsoAdAppId = *' -and $_ -notlike '$SsoAdAppKeyValue = *' -and $_ -notlike '$ExcelAdAppId = *' -and $_ -notlike '$PowerBiAdAppId = *' -and $_ -notlike '$PowerBiAdAppKeyValue = *' -and $_ -notlike '$EMailAdAppId = *' -and $_ -notlike '$EMailAdAppKeyValue = *' }
+            $settings = Get-Content -path $settingsScript | Where-Object { 
+                $_ -notlike '$SsoAdAppId = *' -and 
+                $_ -notlike '$SsoAdAppKeyValue = *' -and 
+                $_ -notlike '$ExcelAdAppId = *' -and 
+                $_ -notlike '$ExcelAdAppKeyValue = *' -and 
+                $_ -notlike '$ApiAdAppId = *' -and 
+                $_ -notlike '$ApiAdAppKeyValue = *' -and 
+                $_ -notlike '$OtherServicesAdAppId = *' -and 
+                $_ -notlike '$OtherServicesAdAppKeyValue = *' -and 
+                $_ -notlike '$aadTenantId = *' }
 
+            $settings += "`$aadTenantId = '$aadTenantId'"
             $settings += "`$SsoAdAppId = '$SsoAdAppId'"
             $settings += "`$SsoAdAppKeyValue = '$SsoAdAppKeyValue'"
             $settings += "`$ExcelAdAppId = '$ExcelAdAppId'"
             $settings += "`$ExcelAdAppKeyValue = '$ExcelAdAppKeyValue'"
-            $settings += "`$PowerBiAdAppId = '$PowerBiAdAppId'"
-            $settings += "`$PowerBiAdAppKeyValue = '$PowerBiAdAppKeyValue'"
+            $settings += "`$OtherServicesAdAppId = '$OtherServicesAdAppId'"
+            $settings += "`$OtherServicesAdAppKeyValue = '$OtherServicesAdAppKeyValue'"
             $settings += "`$ApiAdAppId = '$ApiAdAppId'"
             $settings += "`$ApiAdAppKeyValue = '$ApiAdAppKeyValue'"
-            $settings += "`$EMailAdAppId = '$EMailAdAppId'"
-            $settings += "`$EMailAdAppKeyValue = '$EMailAdAppKeyValue'"
 
             Set-Content -Path $settingsScript -Value $settings
 
             $params += @{
-                "AadTenant" = $aadTenant
+                "AadTenant" = $aadTenantId
                 "AadAppId" =  $SsoAdAppId
                 "AadAppIdUri" = $appIdUri
             }
-
+    
         } catch {
             AddToStatus -color Red $_.Exception.Message
             AddToStatus -color Red "Reverting to NavUserPassword authentication"
-            $auth = "NavUserPassword"
+            $auth = "NavUserPassword"            
         }
     }
 }
@@ -186,9 +228,12 @@ AddToStatus "Locale $locale"
 $securePassword = ConvertTo-SecureString -String $adminPassword -Key $passwordKey
 $credential = New-Object System.Management.Automation.PSCredential($navAdminUsername, $securePassword)
 $azureSqlCredential = New-Object System.Management.Automation.PSCredential($azureSqlAdminUsername, $securePassword)
-$params += @{ "licensefile" = "$licensefileuri"
-             "publicDnsName" = $publicDnsName }
-
+$params += @{
+    "licensefile" = "$licensefileuri"
+    "publicDnsName" = $publicDnsName
+    "imageName" = "mybc:$navVersion-$country".ToLowerInvariant()
+}
+        
 if ($AddTraefik -eq "Yes") {
     $params += @{ "useTraefik" = $true }
 }
@@ -224,19 +269,19 @@ elseif ("$sqlServerType" -eq "SQLDeveloper") {
     $DatabaseFolder = "c:\databases"
     $DatabaseName = $containerName
     $dbcredentials = New-Object PSCredential -ArgumentList 'sa', $securePassword
-
+    
     if (!(Test-Path $DatabaseFolder)) {
         New-Item $DatabaseFolder -ItemType Directory | Out-Null
     }
-
+    
     if (Test-Path (Join-Path $DatabaseFolder "$($DatabaseName).*")) {
 
         Remove-BCContainer $containerName
-
+        
         AddToStatus "Dropping database $DatabaseName from host SQL Server"
-        Invoke-SqlCmd -Query "ALTER DATABASE [$DatabaseName] SET OFFLINE WITH ROLLBACK IMMEDIATE"
+        Invoke-SqlCmd -Query "ALTER DATABASE [$DatabaseName] SET OFFLINE WITH ROLLBACK IMMEDIATE" 
         Invoke-Sqlcmd -Query "DROP DATABASE [$DatabaseName]"
-
+        
         AddToStatus "Removing Database files $($databaseFolder)\$($DatabaseName).*"
         Remove-Item -Path (Join-Path $DatabaseFolder "$($DatabaseName).*") -Force
     }
@@ -260,19 +305,19 @@ elseif ("$sqlServerType" -eq "SQLDeveloper") {
         else {
             $imageName = Get-BestBCContainerImageName -imageName $imageName
             docker pull $imageName
-
+        
             $dbPath = Join-Path $env:TEMP ([Guid]::NewGuid().ToString())
             Extract-FilesFromBCContainerImage -imageName $imageName -extract database -path $dbPath -force
-
+        
             $files = @()
             Get-ChildItem -Path (Join-Path $dbPath "databases") | % {
                 $DestinationFile = "{0}\{1}{2}" -f $databaseFolder, $DatabaseName, $_.Extension
                 Copy-Item -Path $_.FullName -Destination $DestinationFile -Force
                 $files += @("(FILENAME = N'$DestinationFile')")
             }
-
+        
             Remove-Item -Path $dbpath -Recurse -Force
-
+        
             AddToStatus "Attaching files as new Database $DatabaseName on host SQL Server"
             AddToStatus "CREATE DATABASE [$DatabaseName] ON $([string]::Join(", ",$Files)) FOR ATTACH"
             Invoke-SqlCmd -Query "CREATE DATABASE [$DatabaseName] ON $([string]::Join(", ",$Files)) FOR ATTACH"
@@ -306,19 +351,19 @@ if ($enableSymbolLoading -eq "Yes") {
 }
 
 if ($includeCSIDE -eq "Yes") {
-    $params += @{
+    $params += @{ 
         "includeCSIDE" = $true
     }
 }
 
 if ($includeAL -eq "Yes") {
-    $params += @{
+    $params += @{ 
         "includeAL" = $true
     }
 }
 
 if ($isolation -eq "Process" -or $isolation -eq "Hyperv") {
-    $params += @{
+    $params += @{ 
         "isolation" = $isolation
     }
 }
@@ -329,7 +374,7 @@ else {
 }
 
 if ($includeCSIDE -eq "Yes" -or $includeAL -eq "Yes") {
-    $params += @{
+    $params += @{ 
         "doNotExportObjectsToText" = $true
     }
 }
@@ -339,17 +384,12 @@ if ($multitenant -eq "Yes") {
 }
 
 if ($testToolkit -ne "No") {
-    if ($licensefileuri -eq "") {
-        AddToStatus -color Red -Line "Ignoring TestToolkit setting as no licensefile has been specified."
+    $params += @{ "includeTestToolkit" = $true }
+    if ($testToolkit -eq "Framework") {
+        $params += @{ "includeTestFrameworkOnly" = $true }
     }
-    else {
-        $params += @{ "includeTestToolkit" = $true }
-        if ($testToolkit -eq "Framework") {
-            $params += @{ "includeTestFrameworkOnly" = $true }
-        }
-        elseif ($testToolkit -eq "Libraries") {
-            $params += @{ "includeTestLibrariesOnly" = $true }
-        }
+    elseif ($testToolkit -eq "Libraries") {
+        $params += @{ "includeTestLibrariesOnly" = $true }
     }
 }
 
@@ -371,7 +411,7 @@ try {
                      -credential $credential `
                      -additionalParameters $additionalParameters `
                      -myScripts $myscripts
-
+    
 } catch {
     AddToStatus -color Red "Container output"
     docker logs $containerName | % { AddToStatus $_ }
@@ -395,12 +435,8 @@ if ("$sqlServerType" -eq "SQLDeveloper") {
 
 if ($auth -eq "AAD") {
     if (([System.Version]$navVersion).Major -lt 13) {
-        $fobfile = Join-Path $env:TEMP "AzureAdAppSetup.fob"
-        Download-File -sourceUrl "https://businesscentralapps.blob.core.windows.net/azureadappsetup/AzureAdAppSetup.fob" -destinationFile $fobfile
-        $sqlCredential = New-Object System.Management.Automation.PSCredential ( "sa", $credential.Password )
-        Import-ObjectsToNavContainer -containerName $containerName -objectsFile $fobfile -sqlCredential $sqlCredential
-        Invoke-NavContainerCodeunit -containerName $containerName -tenant "default" -CodeunitId 50000 -MethodName SetupAzureAdApp -Argument ($PowerBiAdAppId+','+$PowerBiAdAppKeyValue)
-    }
+        throw "AAD authentication no longer supported for NAV"
+    } 
     else {
         $appfile = Join-Path $env:TEMP "AzureAdAppSetup.app"
         if (([System.Version]$navVersion) -ge ([System.Version]"18.0.0.0")) {
@@ -413,7 +449,7 @@ if ($auth -eq "AAD") {
             Download-File -sourceUrl "https://businesscentralapps.blob.core.windows.net/azureadappsetup/15.9.10.0/azureadappsetup-apps.zip" -destinationFile $appfile
         }
         elseif (([System.Version]$navVersion).Major -ge 15) {
-            Download-File -sourceUrl "hhttps://businesscentralapps.blob.core.windows.net/azureadappsetup/15.0.7.0/azureadappsetup-apps.zip" -destinationFile $appfile
+            Download-File -sourceUrl "https://businesscentralapps.blob.core.windows.net/azureadappsetup/15.0.7.0/azureadappsetup-apps.zip" -destinationFile $appfile
         }
         else {
             Download-File -sourceUrl "https://businesscentralapps.blob.core.windows.net/azureadappsetup/Microsoft_AzureAdAppSetup_13.0.0.0.app" -destinationFile $appfile
@@ -423,14 +459,14 @@ if ($auth -eq "AAD") {
 
         $companyId = Get-NavContainerApiCompanyId -containerName $containerName -tenant "default" -credential $credential
 
-        $parameters = @{
+        $parameters = @{ 
             "name" = "SetupAzureAdApp"
-            "value" = "$PowerBiAdAppId,$PowerBiAdAppKeyValue"
+            "value" = "$OtherServicesAdAppId,$OtherServicesAdAppKeyValue"
         }
         Invoke-NavContainerApi -containerName $containerName -tenant "default" -credential $credential -APIPublisher "Microsoft" -APIGroup "Setup" -APIVersion "beta" -CompanyId $companyId -Method "POST" -Query "aadApps" -body $parameters | Out-Null
 
         if (([System.Version]$navVersion) -ge ([System.Version]"18.0.0.0")) {
-            $parameters = @{
+            $parameters = @{ 
                 "name" = "SetupAadApplication"
                 "value" = "$ApiAdAppId,API,D365 ADMINISTRATOR:D365 FULL ACCESS"
             }
@@ -440,10 +476,10 @@ if ($auth -eq "AAD") {
         if (([System.Version]$navVersion) -ge ([System.Version]"17.1.0.0")) {
             $parameters = @{
                 "name" = "SetupEMailAdApp"
-                "value" = "$EMailAdAppId,$EMailAdAppKeyValue,$Office365UserName"
+                "value" = "$OtherServicesAdAppId,$OtherServicesAdAppKeyValue,$Office365UserName"
             }
             Invoke-NavContainerApi -containerName $containerName -tenant "default" -credential $credential -APIPublisher "Microsoft" -APIGroup "Setup" -APIVersion "beta" -CompanyId $companyId -Method "POST" -Query "aadApps" -body $parameters | Out-Null
-
+    
             if ($sqlServerType -eq "SQLExpress") {
                 Invoke-ScriptInBCContainer -containerName $containerName -scriptblock {
                     $config = Get-NAVServerConfiguration -serverinstance $serverinstance -asxml
@@ -500,7 +536,7 @@ if ($sqlServerType -eq "AzureSQL") {
     # Check for Multitenant & Included "-ErrorAction Continue" to prevent an exit
     if ($multitenant -eq "Yes") {
         New-NavContainerTenant -containerName $containerName -tenantId "default" -sqlCredential $azureSqlCredential -ErrorAction Continue
-    }
+    }    
     # Included "-ErrorAction Continue" to prevent an exit
     New-NavContainerNavUser -containerName $containerName -tenant "default" -Credential $credential -AuthenticationEmail $Office365UserName -ChangePasswordAtNextLogOn:$false -PermissionSetId "SUPER" -ErrorAction Continue
 } else {
@@ -522,7 +558,7 @@ if ("$bingmapskey" -ne "") {
     $codeunitId = 0
     $apiMethod = ""
     switch (([System.Version]$navVersion).Major) {
-           9 { $appFile = "" }
+               9 { $appFile = "" }
               10 { $appFile = "" }
               11 { $appFile = "https://businesscentralapps.blob.core.windows.net/bingmaps-pte/freddyk_BingMaps_11.0.0.0.app"; $codeunitId = 50103 }
               12 { $appFile = "https://businesscentralapps.blob.core.windows.net/bingmaps-pte/freddyk_BingMaps_12.0.0.0.app"; $codeunitId = 50103 }
@@ -551,11 +587,11 @@ if ("$bingmapskey" -ne "") {
         if ("$webServicesKey" -eq "") {
             $session = Get-NavContainerSession -containerName $containerName
             Invoke-Command -Session $session -ScriptBlock { Param($navAdminUsername)
-                Set-NAVServerUser -ServerInstance $serverInstance -Tenant "default" -UserName $navAdminUsername -CreateWebServicesKey
+                Set-NAVServerUser -ServerInstance $serverInstance -Tenant "default" -UserName $navAdminUsername -CreateWebServicesKey 
             } -ArgumentList $navAdminUsername
             $webServicesKey = (Get-NavContainerNavUser -containerName $containerName -tenant "default" | Where-Object { $_.Username -eq $navAdminUsername }).WebServicesKey
         }
-
+        
         AddToStatus "Installing BingMaps app from $appFile"
         Publish-NavContainerApp -containerName $containerName `
                                 -tenant "default" `
@@ -564,7 +600,7 @@ if ("$bingmapskey" -ne "") {
                                 -skipVerification `
                                 -sync `
                                 -install
-
+    
         if ($codeunitId) {
             AddToStatus "Geocode customers, by invoking codeunit $codeunitId"
             Get-CompanyInNavContainer -containerName $containerName | % {
@@ -603,11 +639,11 @@ if ("$bingmapskey" -ne "") {
                 }
                 Invoke-Sqlcmd -ServerInstance $databaseServerInstance -Database $params.databaseName -Credential $params.databaseCredential -Query "INSERT INTO [dbo].[NAV App Setting] ([App ID],[Allow HttpClient Requests]) VALUES ('a949d4bf-5f3c-49d8-b4be-5359d609683b', 1)"
             }
-
+           
             $tenant = "default"
             $companyId = Get-NavContainerApiCompanyId -containerName $containerName -tenant $tenant -credential $credential
 
-            $parameters = @{
+            $parameters = @{ 
                 "name" = "BingMapsKey"
                 "value" = $bingMapsKey
             }
@@ -645,11 +681,11 @@ $certFile = Get-Item "$containerFolder\*.cer"
 if ($certFile) {
     $certFileName = $certFile.FullName
     AddToStatus "Importing $certFileName to trusted root"
-    $pfx = new-object System.Security.Cryptography.X509Certificates.X509Certificate2
+    $pfx = new-object System.Security.Cryptography.X509Certificates.X509Certificate2 
     $pfx.import($certFileName)
     $store = new-object System.Security.Cryptography.X509Certificates.X509Store([System.Security.Cryptography.X509Certificates.StoreName]::Root,"localmachine")
-    $store.open("MaxAllowed")
-    $store.add($pfx)
+    $store.open("MaxAllowed") 
+    $store.add($pfx) 
     $store.close()
 }
 
