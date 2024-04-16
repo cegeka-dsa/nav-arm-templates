@@ -615,7 +615,7 @@ if ("$bingmapskey" -ne "") {
             AddToStatus "Geocode customers, by invoking api method $apiMethod"
 
             if ($sqlServerType -eq "SQLExpress") {
-                Invoke-ScriptInBCContainer -containerName $containerName -scriptblock {
+                Invoke-ScriptInBCContainer -containerName $containerName -usePwsh $false -scriptblock {
                     $config = Get-NAVServerConfiguration -serverinstance $serverinstance -asxml
                     if ($config.SelectSingleNode("//appSettings/add[@key='Multitenant']").Value -eq 'True') {
                         $databaseName = "default"
