@@ -366,6 +366,7 @@ try {
                      -containerName $containerName `
                      -useSSL `
                      -updateHosts `
+                     -memoryLimit '16G' `
                      -auth $Auth `
                      -authenticationEMail $Office365UserName `
                      -credential $credential `
