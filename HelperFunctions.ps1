@@ -83,7 +83,8 @@ function Restore-BacpacWithRetry
     if (!($dacdll))
     {
         #InstallPrerequisite -Name "Dac Framework 18.2" -MsiPath "c:\download\DacFramework.msi" -MsiUrl "https://download.microsoft.com/download/9/2/2/9228AAC2-90D1-4F48-B423-AF345296C7DD/EN/x64/DacFramework.msi" | Out-Null
-        InstallPrerequisite -Name "Dac Framework 19.0" -MsiPath "c:\download\DacFramework.msi" -MsiUrl "https://go.microsoft.com/fwlink/?linkid=2185764" | Out-Null
+    	Write-Host "Installing Dac Framework 19.0"
+    	InstallPrerequisite -Name "Dac Framework 19.0" -MsiPath "c:\download\DacFramework.msi" -MsiUrl "https://go.microsoft.com/fwlink/?linkid=2185764" | Out-Null
         $dacdll = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\Microsoft.SqlServer.Dac.dll"
     }
     Add-Type -path $dacdll.FullName
