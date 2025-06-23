@@ -99,7 +99,7 @@ function Restore-BacpacWithRetry
         $sqlpackageExe = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\sqlpackage.exe"
     }
 
-    $ConnectionString = "Data Source=$DatabaseServer\$DatabaseInstance;Initial Catalog=master;Connection Timeout=0;Integrated Security=True;"
+    $ConnectionString = "Data Source=$DatabaseServer\$DatabaseInstance;Initial Catalog=$DatabaseName;Connection Timeout=0;Integrated Security=True;"
 
     $attempt = 0
     while ($true) {
