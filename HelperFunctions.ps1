@@ -79,25 +79,34 @@ function Restore-BacpacWithRetry
 		[int]$maxattempts = 10
     )
 
-    $dacdll = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\Microsoft.SqlServer.Dac.dll"
-    if (!($dacdll))
-    {
-        #InstallPrerequisite -Name "Dac Framework 18.2" -MsiPath "c:\download\DacFramework.msi" -MsiUrl "https://download.microsoft.com/download/9/2/2/9228AAC2-90D1-4F48-B423-AF345296C7DD/EN/x64/DacFramework.msi" | Out-Null
-    	Write-Host "Installing Dac Framework 19.0"
-    	InstallPrerequisite -Name "Dac Framework 19.0" -MsiPath "c:\download\DacFramework.msi" -MsiUrl "https://go.microsoft.com/fwlink/?linkid=2185764" | Out-Null
-        $dacdll = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\Microsoft.SqlServer.Dac.dll"
+    $sqlpackageExe = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\sqlpackage.exe"
+    if (!($sqlpackageExe)) {
+        $Name = "Dac Framework 19.0"
+        $MsiPath = "c:\download\DacFramework.msi"
+        $MsiUrl = "https://go.microsoft.com/fwlink/?linkid=2185764"
+        if (!(Test-Path $MsiPath)) {
+            Write-Host "Downloading $Name"
+            $MsiFolder = [System.IO.Path]::GetDirectoryName($MsiPath)
+            if (!(Test-Path $MsiFolder)) {
+                New-Item -Path $MsiFolder -ItemType Directory | Out-Null
+            }
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            (New-Object System.Net.WebClient).DownloadFile($MsiUrl, $MsiPath)
+        }
+        Write-Host "Installing $Name"
+        Start-Process $MsiPath -ArgumentList "/quiet /qn /passive" -Wait
+
+        $sqlpackageExe = Get-Item "C:\Program Files\Microsoft SQL Server\*\DAC\bin\sqlpackage.exe"
     }
-    Add-Type -path $dacdll.FullName
-    $conn = "Data Source=$DatabaseServer\$DatabaseInstance;Initial Catalog=master;Connection Timeout=0;Integrated Security=True;"
+
+    $ConnectionString = "Data Source=$DatabaseServer\$DatabaseInstance;Initial Catalog=master;Connection Timeout=0;Integrated Security=True;"
 
     $attempt = 0
     while ($true) {
         try {
             $attempt++
             Write-Host "Restoring Database from $Bacpac as $DatabaseName"
-            $AppimportBac = New-Object Microsoft.SqlServer.Dac.DacServices $conn
-            $ApploadBac = [Microsoft.SqlServer.Dac.BacPackage]::Load($Bacpac)
-            $AppimportBac.ImportBacpac($ApploadBac, $DatabaseName)
+            & $sqlpackageExe /a:Import /sf:$Bacpac /tcs:$ConnectionString /p:Storage=File
             break
         } catch {
             if ($attempt -ge $maxattempts) {
