@@ -106,7 +106,7 @@ function Restore-BacpacWithRetry
         try {
             $attempt++
             Write-Host "Restoring Database from $Bacpac as $DatabaseName"
-            & $sqlpackageExe /a:Import /sf:$Bacpac /tcs:$ConnectionString /p:Storage=File
+            & $sqlpackageExe /a:Import /sf:$Bacpac /tcs:$ConnectionString /p:Storage=File /p:RebuildIndexesOfflineForDataPhase=True
             break
         } catch {
             if ($attempt -ge $maxattempts) {
