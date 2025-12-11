@@ -111,22 +111,13 @@ else {
 "@ | Set-Content "c:\myfolder\SetupConfiguration.ps1"
 
         try {
-            <#
+
             $bcAuthContext = New-BcAuthContext `
                 -tenantID  "4a4699e8-81d6-4b55-96a5-37d69964a799" `
                 -clientID  "9cf6be20-dccb-410a-9b57-3190d0d0d662" `
                 -clientSecret "3h78Q~MLvxtx.gWTdRIqMXOI-ezaVNVe8x~oEcM4" `
-                -scopes "https://graph.microsoft.com/.default" #>
+                -scopes "https://graph.microsoft.com/.default"
 
-            $authContext = New-BcAuthContext -tenantID $aadDomain -credential $Office365Credential -scopes "https://graph.microsoft.com/.default"
-            if (-not $authContext) {
-                $authContext = New-BcAuthContext -includeDeviceLogin -scopes "https://graph.microsoft.com/.default" -deviceLoginTimeout ([TimeSpan]::FromSeconds(0))
-                AddToStatus $authContext.message
-                $authContext = New-BcAuthContext -deviceCode $authContext.deviceCode -deviceLoginTimeout ([TimeSpan]::FromMinutes(30))
-                if (-not $authContext) {
-                    throw "Failed to authenticate with Office 365"
-                }
-            }
 
             $AdProperties = New-AadAppsForBc `
                 -appIdUri $appIdUri `
@@ -134,16 +125,17 @@ else {
                 -IncludeExcelAadApp `
                 -IncludeOtherServicesAadApp `
                 -IncludeEmailAadApp `
+                -IncludePowerBiAadApp `
                 -IncludeApiAccess `
                 -preAuthorizePowerShell `
-                -bcAuthContext $authContext
+                -bcAuthContext $bcAuthContext
 
             $SsoAdAppId = $AdProperties.SsoAdAppId
             $SsoAdAppKeyValue = $AdProperties.SsoAdAppKeyValue
             $ExcelAdAppId = $AdProperties.ExcelAdAppId
             $ExcelAdAppKeyValue = $AdProperties.ExcelAdAppKeyValue
-            $OtherServicesAdAppId = $AdProperties.OtherServicesAdAppId
-            $OtherServicesAdAppKeyValue = $AdProperties.OtherServicesAdAppKeyValue
+            $PowerBiAdAppId = $AdProperties.PowerBiAdAppId
+            $PowerBiAdAppKeyValue = $AdProperties.PowerBiAdAppKeyValue
             $ApiAdAppId = $AdProperties.ApiAdAppId
             $ApiAdAppKeyValue = $AdProperties.ApiAdAppKeyValue
             $EMailAdAppId = $AdProperties.EMailAdAppId
@@ -154,21 +146,14 @@ Write-Host 'Changing Server config to NavUserPassword to enable basic web servic
 Set-NAVServerConfiguration -ServerInstance `$serverInstance -KeyName 'ExcelAddInAzureActiveDirectoryClientId' -KeyValue '$ExcelAdAppId' -WarningAction Ignore
 "@ | Add-Content "c:\myfolder\SetupConfiguration.ps1"
 
-            $settings = Get-Content -Path $settingsScript | Where-Object {
-                $_ -notlike '$SsoAdAppId = *' -and
-                $_ -notlike '$SsoAdAppKeyValue = *' -and
-                $_ -notlike '$ExcelAdAppId = *' -and
-                $_ -notlike '$OtherServicesAdAppId = *' -and
-                $_ -notlike '$OtherServicesAdAppKeyValue = *' -and
-                $_ -notlike '$EMailAdAppId = *' -and
-                $_ -notlike '$EMailAdAppKeyValue = *' }
+            $settings = Get-Content -Path $settingsScript | Where-Object { $_ -notlike '$SsoAdAppId = *' -and $_ -notlike '$SsoAdAppKeyValue = *' -and $_ -notlike '$ExcelAdAppId = *' -and $_ -notlike '$PowerBiAdAppId = *' -and $_ -notlike '$PowerBiAdAppKeyValue = *' -and $_ -notlike '$EMailAdAppId = *' -and $_ -notlike '$EMailAdAppKeyValue = *' }
 
             $settings += "`$SsoAdAppId = '$SsoAdAppId'"
             $settings += "`$SsoAdAppKeyValue = '$SsoAdAppKeyValue'"
             $settings += "`$ExcelAdAppId = '$ExcelAdAppId'"
             $settings += "`$ExcelAdAppKeyValue = '$ExcelAdAppKeyValue'"
-            $settings += "`$OtherServicesAdAppId = '$OtherServicesAdAppId'"
-            $settings += "`$OtherServicesAdAppKeyValue = '$OtherServicesAdAppKeyValue'"
+            $settings += "`$PowerBiAdAppId = '$PowerBiAdAppId'"
+            $settings += "`$PowerBiAdAppKeyValue = '$PowerBiAdAppKeyValue'"
             $settings += "`$ApiAdAppId = '$ApiAdAppId'"
             $settings += "`$ApiAdAppKeyValue = '$ApiAdAppKeyValue'"
             $settings += "`$EMailAdAppId = '$EMailAdAppId'"
@@ -426,8 +411,12 @@ if ("$sqlServerType" -eq "SQLDeveloper") {
 }
 
 if ($auth -eq "AAD") {
-    if (([System.Version]$navVersion).Major -lt 15) {
-        throw "AAD authentication no longer supported for this version"
+    if (([System.Version]$navVersion).Major -lt 13) {
+        $fobfile = Join-Path $env:TEMP "AzureAdAppSetup.fob"
+        Download-File -sourceUrl "https://businesscentralapps.blob.core.windows.net/azureadappsetup/AzureAdAppSetup.fob" -destinationFile $fobfile
+        $sqlCredential = New-Object System.Management.Automation.PSCredential ( "sa", $credential.Password )
+        Import-ObjectsToNavContainer -containerName $containerName -objectsFile $fobfile -sqlCredential $sqlCredential
+        Invoke-NavContainerCodeunit -containerName $containerName -tenant "default" -Codeunitid 50000 -MethodName SetupAzureAdApp -Argument ($PowerBiAdAppId + ',' + $PowerBiAdAppKeyValue)
     }
     else {
         $appfile = Join-Path $env:TEMP "AzureAdAppSetup.app"
@@ -453,14 +442,14 @@ if ($auth -eq "AAD") {
             Set-NAVServerConfiguration -ServerInstance 'BC' -KeyName 'ClientServicesCredentialType' -KeyValue 'NavUserPassword' -WarningAction Ignore
         }
         Invoke-ScriptInNavContainer -containerName $ContainerName -scriptblock $ScriptBlock
-        Restart-NavContainer -containerName $containerName
+        Restart-NavContainer -ContainerName $containerName
         Start-Sleep -Seconds 120
 
         $companyId = Get-NavContainerApiCompanyId -containerName $containerName -tenant "default" -credential $credential
 
         $parameters = @{
             "name"  = "SetupAzureAdApp"
-            "value" = "$OtherServicesAdAppId,$OtherServicesAdAppKeyValue"
+            "value" = "$PowerBiAdAppId,$PowerBiAdAppKeyValue"
         }
         Invoke-NavContainerApi -containerName $containerName -tenant "default" -credential $credential -APIPublisher "Microsoft" -APIGroup "Setup" -APIVersion "beta" -CompanyId $companyId -Method "POST" -Query "aadApps" -body $parameters | Out-Null
 
