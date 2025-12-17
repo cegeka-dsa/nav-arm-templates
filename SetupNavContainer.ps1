@@ -129,7 +129,8 @@ else {
                 -IncludeEmailAadApp `
                 -IncludeApiAccess `
                 -preAuthorizePowerShell `
-                -bcAuthContext $authContext
+                -bcAuthContext $authContext `
+                -autoconsent
 
             $SsoAdAppId = $AdProperties.SsoAdAppId
             $SsoAdAppKeyValue = $AdProperties.SsoAdAppKeyValue
