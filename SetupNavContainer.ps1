@@ -687,4 +687,3 @@ AddToStatus -color Green "Container output"
 docker logs $containerName | % { AddToStatus $_ }
 
 AddToStatus -color Green "Container setup complete!"
-
