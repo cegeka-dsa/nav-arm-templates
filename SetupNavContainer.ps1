@@ -143,6 +143,39 @@ else {
             $EMailAdAppId = $AdProperties.EMailAdAppId
             $EMailAdAppKeyValue = $AdProperties.EMailAdAppKeyValue
 
+            # Grant admin consent for additional app registrations (not covered by -autoconsent)
+            foreach ($appId in $EMailAdAppId, $ExcelAdAppId, $OtherServicesAdAppId) {
+                if (-not $appId) { continue }
+                try {
+                    $sp = Get-MgServicePrincipal -All | Where-Object { $_.AppId -eq $appId }
+                    if (-not $sp) {
+                        Start-Sleep -Seconds 5
+                        $sp = Get-MgServicePrincipal -All | Where-Object { $_.AppId -eq $appId }
+                        if (-not $sp) { $sp = New-MgServicePrincipal -AppId $appId }
+                    }
+                    $app = Get-MgApplication -All | Where-Object { $_.AppId -eq $appId }
+                    foreach ($rra in $app.RequiredResourceAccess) {
+                        $rsp = Get-MgServicePrincipal -All | Where-Object { $_.AppId -eq $rra.ResourceAppId }
+                        if (-not $rsp) { continue }
+                        $scopeIds = $rra.ResourceAccess | Where-Object { $_.Type -eq "Scope" } | Select-Object -ExpandProperty Id
+                        $scopeNames = $rsp.Oauth2PermissionScopes | Where-Object { $_.Id -in $scopeIds } | Select-Object -ExpandProperty Value
+                        $scopeString = $scopeNames -join " "
+                        if (-not $scopeString) { continue }
+                        $existing = Get-MgOAuth2PermissionGrant -All | Where-Object { $_.ClientId -eq $sp.Id -and $_.ResourceId -eq $rsp.Id -and $_.ConsentType -eq "AllPrincipals" }
+                        if ($existing) {
+                            Update-MgOAuth2PermissionGrant -OAuth2PermissionGrantId $existing.Id -Scope $scopeString | Out-Null
+                        }
+                        else {
+                            New-MgOAuth2PermissionGrant -ClientId $sp.Id -ConsentType "AllPrincipals" -ResourceId $rsp.Id -Scope $scopeString | Out-Null
+                        }
+                    }
+                    AddToStatus "Granted admin consent for $($sp.DisplayName)"
+                }
+                catch {
+                    AddToStatus -color Yellow "Could not consent app ${appId}: $_"
+                }
+            }
+
             @"
 Write-Host 'Changing Server config to NavUserPassword to enable basic web services'
 Set-NAVServerConfiguration -ServerInstance `$serverInstance -KeyName 'ExcelAddInAzureActiveDirectoryClientId' -KeyValue '$ExcelAdAppId' -WarningAction Ignore
@@ -687,3 +720,4 @@ AddToStatus -color Green "Container output"
 docker logs $containerName | % { AddToStatus $_ }
 
 AddToStatus -color Green "Container setup complete!"
+
