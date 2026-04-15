@@ -64,24 +64,42 @@ elseif ($nchBranch -eq "") {
     Import-Module $module.FullName -DisableNameChecking
 }
 
-if (-not (Get-InstalledModule Az -ErrorAction SilentlyContinue)) {
-    AddToStatus "Installing Az module"
-    Install-Module Az -Force
-}
+# Install PowerShell modules in parallel (saves ~10-15 min vs sequential)
+$modulesToInstall = @()
+if (-not (Get-InstalledModule Az -ErrorAction SilentlyContinue)) { $modulesToInstall += "Az" }
+if (-not (Get-InstalledModule AzureAD -ErrorAction SilentlyContinue)) { $modulesToInstall += "AzureAD" }
+if (-not (Get-InstalledModule "Microsoft.Graph" -ErrorAction SilentlyContinue)) { $modulesToInstall += "Microsoft.Graph" }
+if (-not (Get-InstalledModule SqlServer -ErrorAction SilentlyContinue)) { $modulesToInstall += "SqlServer" }
 
-if (-not (Get-InstalledModule AzureAD -ErrorAction SilentlyContinue)) {
-    AddToStatus "Installing AzureAD module"
-    Install-Module AzureAD -Force
+if ($modulesToInstall.Count -gt 1) {
+    AddToStatus "Installing PowerShell modules in parallel: $($modulesToInstall -join ', ')"
+    $moduleJobs = @{}
+    foreach ($mod in $modulesToInstall) {
+        $moduleJobs[$mod] = Start-Job -ScriptBlock {
+            param($moduleName)
+            Install-Module $moduleName -Force
+        } -ArgumentList $mod
+    }
+    # Wait for all module installs to complete
+    foreach ($mod in $moduleJobs.Keys) {
+        try {
+            Receive-Job -Job $moduleJobs[$mod] -Wait -ErrorAction Stop | Out-Null
+            AddToStatus "Module $mod installed successfully"
+        }
+        catch {
+            AddToStatus -color Red "Failed to install module ${mod}: $($_.Exception.Message)"
+            # Retry sequentially as fallback
+            AddToStatus "Retrying $mod installation sequentially"
+            Install-Module $mod -Force
+        }
+        finally {
+            Remove-Job -Job $moduleJobs[$mod] -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
-
-if (-not (Get-InstalledModule "Microsoft.Graph" -ErrorAction SilentlyContinue)) {
-    AddToStatus "Installing Microsoft.Graph module"
-    Install-Module "Microsoft.Graph" -Force
-}
-
-if (-not (Get-InstalledModule SqlServer -ErrorAction SilentlyContinue)) {
-    AddToStatus "Installing SqlServer module"
-    Install-Module SqlServer -Force
+elseif ($modulesToInstall.Count -eq 1) {
+    AddToStatus "Installing $($modulesToInstall[0]) module"
+    Install-Module $modulesToInstall[0] -Force
 }
 
 $securePassword = ConvertTo-SecureString -String $adminPassword -Key $passwordKey

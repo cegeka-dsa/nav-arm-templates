@@ -333,11 +333,51 @@ if ($style -eq "devpreview") {
 }
 
 if ($artifactUrl -ne "") {
+    # Start downloading BC artifacts in background while the generic image pulls
+    $bcModulePath = if (Test-Path "C:\demo\*\BcContainerHelper.psm1") { (Get-Item "C:\demo\*\BcContainerHelper.psm1").FullName } else { $null }
+    $artifactDownloadJob = Start-Job -ScriptBlock {
+        param($artifactUrl, $bcModulePath)
+        if ($bcModulePath) { Import-Module $bcModulePath -DisableNameChecking } else { Import-Module -Name bccontainerhelper -DisableNameChecking }
+        if ($artifactUrl -notlike "https://*") {
+            $segments = "$artifactUrl/////".Split('/')
+            $artifactUrl = Get-BCArtifactUrl -storageAccount $segments[0] -type $segments[1] -version $segments[2] -country $segments[3] -select $segments[4] -sasToken $segments[5] | Select-Object -First 1
+        }
+        Download-Artifacts -artifactUrl $artifactUrl -includePlatform
+    } -ArgumentList $artifactUrl, $bcModulePath
+
+    # Pull generic image in foreground (~8 min, artifacts download in parallel)
     $imageName = Get-BestGenericImageName
     AddToStatus "Pulling $imageName (this might take some time)"
     if (!(DockerDo -imageName $imageName -command pull))  {
         throw "Error pulling image"
     }
+
+    # Wait for artifact download (should already be done — it's ~3 min vs ~8 min generic pull)
+    try {
+        Receive-Job -Job $artifactDownloadJob -Wait -ErrorAction Stop | Out-Null
+        AddToStatus "BC artifacts downloaded successfully"
+    }
+    catch {
+        AddToStatus -color Yellow "Background artifact download failed, will retry during container setup"
+    }
+    finally {
+        Remove-Job -Job $artifactDownloadJob -Force -ErrorAction SilentlyContinue
+    }
+
+    # Start building the BC image in background (runs during VC++/SQL/OpenXML installs and AAD setup)
+    AddToStatus "Starting BC image build in background"
+    $imageBuildJob = Start-Job -ScriptBlock {
+        param($artifactUrl, $bcModulePath)
+        if ($bcModulePath) { Import-Module $bcModulePath -DisableNameChecking } else { Import-Module -Name bccontainerhelper -DisableNameChecking }
+        if ($artifactUrl -notlike "https://*") {
+            $segments = "$artifactUrl/////".Split('/')
+            $artifactUrl = Get-BCArtifactUrl -storageAccount $segments[0] -type $segments[1] -version $segments[2] -country $segments[3] -select $segments[4] -sasToken $segments[5] | Select-Object -First 1
+        }
+        $artifactPaths = Download-Artifacts -artifactUrl $artifactUrl -includePlatform
+        $appManifest = Get-Content (Join-Path $artifactPaths[0] "manifest.json") | ConvertFrom-Json
+        $imgName = "mybc:$($appManifest.Version)-$($appManifest.Country.ToLowerInvariant())".ToLowerInvariant()
+        New-BcImage -artifactUrl $artifactUrl -imageName $imgName
+    } -ArgumentList $artifactUrl, $bcModulePath
 }
 else {
     $imageName = ""
@@ -357,22 +397,38 @@ else {
     }
 }
 
-AddToStatus "Installing Visual C++ Redist"
+AddToStatus "Downloading prerequisites in parallel (VC++ Redist, SQL Native Client, OpenXML)"
 $vcRedistUrl = "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x86.exe"
 $vcRedistFile = "C:\DOWNLOAD\vcredist_x86.exe"
-Download-File -sourceUrl $vcRedistUrl -destinationFile $vcRedistFile
+$sqlncliUrl = "https://download.microsoft.com/download/3/A/6/3A632674-A016-4E31-A675-94BE390EA739/ENU/x64/sqlncli.msi"
+$sqlncliFile = "C:\DOWNLOAD\sqlncli.msi"
+$openXmlUrl = "https://download.microsoft.com/download/5/5/3/553C731E-9333-40FB-ADE3-E02DC9643B31/OpenXMLSDKV25.msi"
+$openXmlFile = "C:\DOWNLOAD\OpenXMLSDKV25.msi"
+
+$downloads = @(
+    @{ Url = $vcRedistUrl; File = $vcRedistFile },
+    @{ Url = $sqlncliUrl; File = $sqlncliFile },
+    @{ Url = $openXmlUrl; File = $openXmlFile }
+)
+$dlJobs = $downloads | ForEach-Object {
+    $url = $_.Url; $file = $_.File
+    Start-Job -ScriptBlock {
+        param($sourceUrl, $destinationFile)
+        Remove-Item -Path $destinationFile -Force -ErrorAction Ignore
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        (New-Object System.Net.WebClient).DownloadFile($sourceUrl, $destinationFile)
+    } -ArgumentList $url, $file
+}
+$dlJobs | Wait-Job | Out-Null
+$dlJobs | ForEach-Object { Receive-Job $_ -ErrorAction Stop; Remove-Job $_ -Force }
+
+AddToStatus "Installing Visual C++ Redist"
 Start-Process $vcRedistFile -argumentList "/q" -wait
 
 AddToStatus "Installing SQL Native Client"
-$sqlncliUrl = "https://download.microsoft.com/download/3/A/6/3A632674-A016-4E31-A675-94BE390EA739/ENU/x64/sqlncli.msi"
-$sqlncliFile = "C:\DOWNLOAD\sqlncli.msi"
-Download-File -sourceUrl $sqlncliUrl -destinationFile $sqlncliFile
 Start-Process "C:\Windows\System32\msiexec.exe" -argumentList "/i $sqlncliFile ADDLOCAL=ALL IACCEPTSQLNCLILICENSETERMS=YES /qn" -wait
 
 AddToStatus "Installing OpenXML 2.5"
-$openXmlUrl = "https://download.microsoft.com/download/5/5/3/553C731E-9333-40FB-ADE3-E02DC9643B31/OpenXMLSDKV25.msi"
-$openXmlFile = "C:\DOWNLOAD\OpenXMLSDKV25.msi"
-Download-File -sourceUrl $openXmlUrl -destinationFile $openXmlFile
 Start-Process $openXmlFile -argumentList "/qn /q /passive" -wait
 
 $beforeContainerSetupScript = (Join-Path $PSScriptRoot "BeforeContainerSetupScript.ps1")

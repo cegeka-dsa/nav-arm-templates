@@ -10,20 +10,8 @@ AddToSTatus "Install Choco"
 Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
 choco feature enable -n allowGlobalConfirmation
 
-AddToStatus "Install git"
-choco install git --force --params "/NoAutoCrlf"
-
-AddToStatus "Install Edge"
-choco install microsoft-edge
-
-AddToStatus "Install Chrome"
-choco install googlechrome
-
-AddToStatus "Install firefox"
-choco install firefox
-
-AddToStatus "7zip"
-choco install 7zip
+AddToStatus "Install git, VSCode, Edge, Chrome, Firefox, 7zip"
+choco install git vscode microsoft-edge googlechrome firefox 7zip --force --params "/NoAutoCrlf"
 
 #AddToStatus "Install Office 365 Business"
 #choco install office365business

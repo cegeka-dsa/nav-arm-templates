@@ -24,32 +24,46 @@ $disableVsCodeUpdate = $false
 if ($firsttime) {
     $Folder = "C:\DOWNLOAD\VSCode"
     $Filename = "$Folder\VSCodeSetup-stable.exe"
+    $samplesFolder = "C:\DOWNLOAD"
+    $samplesFilename = "$samplesFolder\samples.zip"
 
     New-Item $Folder -itemtype directory -ErrorAction ignore | Out-Null
-    if (!(Test-Path $Filename)) {
-        $sourceUrl = "https://go.microsoft.com/fwlink/?Linkid=852157"
 
-        Download-File -SourceUrl $sourceUrl -destinationFile $Filename
-    }
+    # Download VS Code and AL samples in parallel
+    AddToStatus "Downloading Visual Studio Code and AL samples in parallel"
+    $vscodeJob = Start-Job -ScriptBlock {
+        param($sourceUrl, $destinationFile)
+        Remove-Item -Path $destinationFile -Force -ErrorAction Ignore
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        (New-Object System.Net.WebClient).DownloadFile($sourceUrl, $destinationFile)
+    } -ArgumentList "https://go.microsoft.com/fwlink/?Linkid=852157", $Filename
+
+    $samplesJob = Start-Job -ScriptBlock {
+        param($sourceUrl, $destinationFile)
+        Remove-Item -Path $destinationFile -Force -ErrorAction Ignore
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        (New-Object System.Net.WebClient).DownloadFile($sourceUrl, $destinationFile)
+    } -ArgumentList "https://www.github.com/Microsoft/AL/archive/master.zip", $samplesFilename
+
+    $vscodeJob, $samplesJob | Wait-Job | Out-Null
+    Receive-Job $vscodeJob -ErrorAction Stop; Remove-Job $vscodeJob -Force
+    Receive-Job $samplesJob -ErrorAction Stop; Remove-Job $samplesJob -Force
     
     AddToStatus "Installing Visual Studio Code (this might take a few minutes)"
     $setupParameters = “/VerySilent /CloseApplications /NoCancel /LoadInf=""c:\demo\vscode.inf"" /MERGETASKS=!runcode"
     Start-Process -FilePath $Filename -WorkingDirectory $Folder -ArgumentList $setupParameters -Wait -Passthru | Out-Null
 
-    AddToStatus "Downloading samples"
-    $Folder = "C:\DOWNLOAD"
-    $Filename = "$Folder\samples.zip"
-    Download-File -sourceUrl "https://www.github.com/Microsoft/AL/archive/master.zip" -destinationFile $filename
+    AddToStatus "Extracting samples"
 
-    Remove-Item -Path "$folder\AL-master" -Force -Recurse -ErrorAction Ignore | Out-null
+    Remove-Item -Path "$samplesFolder\AL-master" -Force -Recurse -ErrorAction Ignore | Out-null
     [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.Filesystem") | Out-Null
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($filename, $folder)
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($samplesFilename, $samplesFolder)
     
     $alFolder = "$([Environment]::GetFolderPath("MyDocuments"))\AL"
     Remove-Item -Path "$alFolder\Samples" -Recurse -Force -ErrorAction Ignore | Out-Null
     New-Item -Path "$alFolder\Samples" -ItemType Directory -Force -ErrorAction Ignore | Out-Null
-    Copy-Item -Path "$folder\AL-master\samples\*" -Destination "$alFolder\samples" -Recurse -ErrorAction Ignore
-    Copy-Item -Path "$folder\AL-master\snippets\*" -Destination "$alFolder\snippets" -Recurse -ErrorAction Ignore
+    Copy-Item -Path "$samplesFolder\AL-master\samples\*" -Destination "$alFolder\samples" -Recurse -ErrorAction Ignore
+    Copy-Item -Path "$samplesFolder\AL-master\snippets\*" -Destination "$alFolder\snippets" -Recurse -ErrorAction Ignore
 }
 
 $codeProcess = get-process Code -ErrorAction SilentlyContinue

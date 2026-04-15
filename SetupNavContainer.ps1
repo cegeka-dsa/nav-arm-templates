@@ -45,9 +45,10 @@ if ($artifactUrl) {
     $country = $appManifest.Country.ToLowerInvariant()
     $locale = Get-LocaleFromCountry $country
 
+    $imageName = "mybc:$navVersion-$country".ToLowerInvariant()
     $Params = @{
         "artifactUrl" = $artifactUrl
-        "imageName"   = "mybc:$navVersion-$country".ToLowerInvariant()
+        "imageName"   = $imageName
     }
 }
 elseif ($navDockerImage) {
@@ -419,6 +420,21 @@ $myScripts = @()
 Get-ChildItem -Path "c:\myfolder" | % { $myscripts += $_.FullName }
 
 try {
+    # Wait for background image build started in SetupVm.ps1
+    if ($imageBuildJob) {
+        AddToStatus "Waiting for background image build to complete..."
+        try {
+            Receive-Job -Job $imageBuildJob -Wait -ErrorAction Stop
+            AddToStatus "Background image build completed successfully"
+        }
+        catch {
+            AddToStatus -color Yellow "Background image build failed: $($_.Exception.Message). New-NavContainer will build the image."
+        }
+        finally {
+            Remove-Job -Job $imageBuildJob -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     AddToStatus "Running container (this might take some time)"
     New-NavContainer -accept_eula -accept_outdated -accept_insiderEula @Params `
         -containerName $containerName `
