@@ -575,8 +575,26 @@ else {
 }
 
 if ("$includeappUris".Trim() -ne "") {
-    foreach ($includeApp in "$includeAppUris".Split(',;')) {
-        Publish-NavContainerApp -containerName $containerName -appFile $includeApp -sync -install -skipVerification
+    $remainingApps = @("$includeAppUris".Split(',;') | Where-Object { $_.Trim() -ne "" })
+    $maxPasses = $remainingApps.Count
+    $pass = 0
+    while ($remainingApps.Count -gt 0 -and $pass -lt $maxPasses) {
+        $pass++
+        $failedApps = @()
+        foreach ($includeApp in $remainingApps) {
+            try {
+                AddToStatus "Publishing app: $includeApp (pass $pass)"
+                Publish-NavContainerApp -containerName $containerName -appFile $includeApp -sync -install -skipVerification
+            }
+            catch {
+                AddToStatus "Failed to publish app: $includeApp (pass $pass). Error: $($_.Exception.Message)"
+                $failedApps += $includeApp
+            }
+        }
+        $remainingApps = $failedApps
+    }
+    if ($remainingApps.Count -gt 0) {
+        throw "Could not publish the following apps after $maxPasses passes: $($remainingApps -join ', ')"
     }
 }
 
