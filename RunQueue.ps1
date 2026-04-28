@@ -10,6 +10,7 @@ if (Test-Path -Path "C:\demo\*\BcContainerHelper.psm1") {
 } else {
     Import-Module -name bccontainerhelper -DisableNameChecking
 }
+$bcContainerHelperConfig.usePwshForBc24 = $false
 
 $storageContext = New-AzStorageContext -ConnectionString $storageConnectionString
 $queuename = $publicDnsName.Split('.')[0]

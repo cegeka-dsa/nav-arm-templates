@@ -12,6 +12,7 @@ if (Test-Path -Path "C:\demo\*\BcContainerHelper.psm1") {
 else {
     Import-Module -Name bccontainerhelper -DisableNameChecking
 }
+$bcContainerHelperConfig.usePwshForBc24 = $false
 
 $settingsScript = Join-Path $PSScriptRoot "settings.ps1"
 

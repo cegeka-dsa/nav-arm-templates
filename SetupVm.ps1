@@ -108,6 +108,7 @@ if (Test-Path -Path "C:\demo\*\BcContainerHelper.psm1") {
 } else {
     Import-Module -name bccontainerhelper -DisableNameChecking
 }
+$bcContainerHelperConfig.usePwshForBc24 = $false
 
 . (Join-Path $PSScriptRoot "settings.ps1")
 
@@ -318,7 +319,8 @@ New-Item $winPsFolder -ItemType Directory -Force -ErrorAction Ignore | Out-Null
     Import-module $module.FullName -DisableNameChecking
 } else {
     Import-Module -name bccontainerhelper -DisableNameChecking
-}' | Set-Content (Join-Path $winPsFolder "Profile.ps1")
+}
+$bcContainerHelperConfig.usePwshForBc24 = $false' | Set-Content (Join-Path $winPsFolder "Profile.ps1")
 
 AddToStatus "Adding Landing Page to Startup Group"
 if ($AddTraefik -eq "Yes") {
