@@ -47,8 +47,8 @@ if ($nchBranch -eq "preview") {
     AddToStatus ("Using BcContainerHelper version "+(get-module BcContainerHelper).Version.ToString())
 }
 elseif ($nchBranch -eq "") {
-    AddToStatus "Installing BcContainerHelper version 6.1.12 from PowerShell Gallery"
-    Install-Module -Name bccontainerhelper -Force -RequiredVersion 6.1.12
+    AddToStatus "Installing Latest BcContainerHelper from PowerShell Gallery"
+    Install-Module -Name bccontainerhelper -Force
     Import-Module -Name bccontainerhelper -DisableNameChecking
     AddToStatus ("Using BcContainerHelper version "+(get-module BcContainerHelper).Version.ToString())
 } else {
@@ -63,6 +63,13 @@ elseif ($nchBranch -eq "") {
     AddToStatus "Loading BcContainerHelper from $($module.FullName)"
     Import-Module $module.FullName -DisableNameChecking
 }
+
+# Workaround for BcContainerHelper 6.1.13+ breaking change (commit f929f6b):
+# When usePwsh=$true and BC28+, useSession is forced to $false, causing docker exec
+# to use pwsh where Invoke-SqlCmd fails due to missing SqlServer module in PS7.
+# Setting usePwshForBc24=$false keeps docker exec on powershell.exe (PS5) where
+# Invoke-SqlCmd works natively.
+$bcContainerHelperConfig.usePwshForBc24 = $false
 
 if (-not (Get-InstalledModule Az -ErrorAction SilentlyContinue)) {
     AddToStatus "Installing Az module"
