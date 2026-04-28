@@ -47,8 +47,8 @@ if ($nchBranch -eq "preview") {
     AddToStatus ("Using BcContainerHelper version "+(get-module BcContainerHelper).Version.ToString())
 }
 elseif ($nchBranch -eq "") {
-    AddToStatus "Installing Latest Business Central Container Helper from PowerShell Gallery"
-    Install-Module -Name bccontainerhelper -Force
+    AddToStatus "Installing BcContainerHelper version 6.1.12 from PowerShell Gallery"
+    Install-Module -Name bccontainerhelper -Force -RequiredVersion 6.1.12
     Import-Module -Name bccontainerhelper -DisableNameChecking
     AddToStatus ("Using BcContainerHelper version "+(get-module BcContainerHelper).Version.ToString())
 } else {
