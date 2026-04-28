@@ -17,6 +17,13 @@ $settingsScript = Join-Path $PSScriptRoot "settings.ps1"
 
 . "$settingsScript"
 
+# Ensure SqlServer module is available on host
+if (!(Get-Module -ListAvailable -Name SqlServer)) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Install-Module SqlServer -Force -AllowClobber -Scope AllUsers
+}
+Import-Module SqlServer -ErrorAction Stop
+
 if ($artifactUrl) {
 
     if ($artifactUrl -notlike "https://*") {
