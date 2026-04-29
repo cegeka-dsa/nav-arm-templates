@@ -155,6 +155,14 @@ else {
                         if (-not $sp) { $sp = New-MgServicePrincipal -AppId $appId }
                     }
                     $app = Get-MgApplication -All | Where-Object { $_.AppId -eq $appId }
+                    if (-not $app) {
+                        Start-Sleep -Seconds 10
+                        $app = Get-MgApplication -All | Where-Object { $_.AppId -eq $appId }
+                    }
+                    if (-not $app) {
+                        AddToStatus -color Yellow "App registration $appId not yet available in directory, skipping consent"
+                        continue
+                    }
                     foreach ($rra in $app.RequiredResourceAccess) {
                         $rsp = Get-MgServicePrincipal -All | Where-Object { $_.AppId -eq $rra.ResourceAppId }
                         if (-not $rsp) { continue }
